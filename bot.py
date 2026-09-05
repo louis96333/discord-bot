@@ -36,6 +36,12 @@ queues = {}
 timeout_tasks = {}
 
 # --- 多重第三方 API 解析工具 ---
+# --- Cobalt & YouTube 工具 ---
+COBALT_INSTANCES = [
+    "https://api.cobalt.tools",
+    "https://cobalt-api.koyeb.app"
+]
+
 PIPED_INSTANCES = [
     "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
@@ -44,17 +50,35 @@ PIPED_INSTANCES = [
     "https://piped-api.garudalinux.org"
 ]
 
-INVIDIOUS_INSTANCES = [
-    "https://inv.riverside.rocks",
-    "https://invidious.nerdvpn.de",
-    "https://invidious.drgns.space"
-]
-
 def extract_video_id(url_or_query):
     """從 URL 或搜尋文字中提取 YouTube Video ID"""
     match = re.search(r"(?:v=|\/|vi=)([0-9A-Za-z_-]{11})", url_or_query)
     if match:
         return match.group(1)
+    return None
+
+def fetch_from_cobalt(youtube_url):
+    """利用 Cobalt API 提取高音質音訊串流網址"""
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    payload = {
+        "url": youtube_url,
+        "downloadMode": "audio",
+        "audioFormat": "mp3"
+    }
+
+    for base_url in COBALT_INSTANCES:
+        try:
+            res = requests.post(f"{base_url}/", json=payload, headers=headers, timeout=8)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("status") in ["tunnel", "redirect"]:
+                    return data.get("url")
+        except Exception:
+            continue
     return None
 
 def fetch_from_piped(endpoint):
@@ -68,52 +92,49 @@ def fetch_from_piped(endpoint):
         except Exception:
             continue
     return None
-
-def fetch_from_invidious(video_id):
-    """備用：從 Invidious API 取得音訊串流"""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    for base_url in INVIDIOUS_INSTANCES:
-        try:
-            res = requests.get(f"{base_url}/api/v1/videos/{video_id}", headers=headers, timeout=4)
-            if res.status_code == 200:
-                data = res.json()
-                title = data.get("title", "未知歌曲")
-                adaptive_formats = data.get("adaptiveFormats", [])
-                audio_streams = [f for f in adaptive_formats if f.get("type", "").startswith("audio/")]
-                if audio_streams:
-                    return title, audio_streams[0]["url"]
-        except Exception:
-            continue
-    return None, None
+    def fetch_youtube_title(video_id):
+    """利用 oEmbed 免費 API 快速取得影片標題"""
+    try:
+        res = requests.get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json", timeout=3)
+        if res.status_code == 200:
+            return res.json().get("title", "YouTube 歌曲")
+    except Exception:
+        pass
+    return "YouTube 歌曲"
 
 def get_audio_stream_and_info(search_query):
-    """雙機制取得音訊網址與標題 (Piped -> Invidious)"""
+    """多重機制取得音訊網址與標題 (Cobalt -> Piped)"""
     video_id = extract_video_id(search_query)
-    
-    # 若不是網址則進行 Piped 搜尋
+
+    # 若傳入的是關鍵字非 URL，先用 Piped 搜尋 Video ID
     if not video_id:
-        data = fetch_from_piped(f"/search?q={requests.utils.quote(search_query)}&filter=videos")
-        if data and data.get("items"):
-            first_item = data["items"][0]
-            url = first_item.get("url", "")
-            video_id = extract_video_id(url)
-            
+        try:
+            data = fetch_from_piped(f"/search?q={requests.utils.quote(search_query)}&filter=videos")
+            if data and data.get("items"):
+                first_item = data["items"][0]
+                url = first_item.get("url", "")
+                video_id = extract_video_id(url)
+        except Exception:
+            pass
+
     if not video_id:
         raise Exception("找不到相關歌曲資訊或影片 ID！")
 
-    # 1. 優先嘗試 Piped API
-    stream_data = fetch_from_piped(f"/streams/{video_id}")
-    if stream_data and stream_data.get("audioStreams"):
-        title = stream_data.get("title", "未知歌曲")
-        audio_url = stream_data["audioStreams"][0]["url"]
-        return title, audio_url
+    full_yt_url = f"https://www.youtube.com/watch?v={video_id}"
+    title = fetch_youtube_title(video_id)
 
-    # 2. 備用方案：嘗試 Invidious API
-    title, audio_url = fetch_from_invidious(video_id)
+    # 1. 優先使用 Cobalt API 抓取串流
+    audio_url = fetch_from_cobalt(full_yt_url)
     if audio_url:
         return title, audio_url
 
-    raise Exception("所有第三方 API 節點皆暫時無法取得該影片串流，請稍後再試或更換歌曲！")
+    # 2. 備用方案：嘗試 Piped API
+    stream_data = fetch_from_piped(f"/streams/{video_id}")
+    if stream_data and stream_data.get("audioStreams"):
+        title = stream_data.get("title", title)
+        return title, stream_data["audioStreams"][0]["url"]
+
+    raise Exception("目前 YouTube 串流擷取受限，請貼上完整網址或稍後再試！")
 # --- FFmpeg 設定 ---
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
