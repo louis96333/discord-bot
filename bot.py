@@ -1,11 +1,12 @@
 import os
 import threading
 import asyncio
+import re
+import requests
 import discord
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
-import yt_dlp
 
 # --- 防休眠網頁伺服器 (Render Web Service 必備) ---
 app = Flask('')
@@ -15,7 +16,6 @@ def home():
     return "Bot is alive and running!"
 
 def run_web():
-    # 讀取 Render 自動分配的 Port，預設 5000
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
@@ -24,11 +24,8 @@ def keep_alive():
     t.start()
 
 # --- 基本設定 ---
-# 讀取環境變數中的 Token
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-
-# 設定無音樂播放或頻道無人時的自動退出時間 (單位：秒)
-INACTIVITY_TIMEOUT = 300  # 300 秒 = 5 分鐘
+INACTIVITY_TIMEOUT = 300  # 5 分鐘
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -38,35 +35,65 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 queues = {}
 timeout_tasks = {}
 
-# --- yt-dlp & FFmpeg 設定 ---
-YTDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'extractaudio': True,
-    'audioformat': 'mp3',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'auto',
-    'source_address': '0.0.0.0',
-    # 徹底移除 'proxy' 欄位
-    # 改用 Web Embedded 模式搭配 Dash/HLS 跳過，讓 yt-dlp 抓取開放串流
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['web_embedded', 'mweb'],
-            'skip': ['dash', 'hls']
-        }
-    }
-}
+# --- Piped API 解析工具 (代替 yt-dlp 繞過 Bot 驗證) ---
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.private.coffee",
+    "https://pipedapi.mha.fi"
+]
+
+def fetch_from_piped(endpoint):
+    """嘗試多個 Piped 實例以確保穩定度"""
+    for base_url in PIPED_INSTANCES:
+        try:
+            res = requests.get(f"{base_url}{endpoint}", timeout=5)
+            if res.status_code == 200:
+                return res.json()
+        except Exception:
+            continue
+    return None
+
+def extract_video_id(url_or_query):
+    """從 URL 或搜尋文字中提取 YouTube Video ID"""
+    match = re.search(r"(?:v=|\/([0-9A-Za-z_-]{11}))", url_or_query)
+    if match:
+        return match.group(1) or match.group(0).replace("v=", "")
+    return None
+
+def get_audio_stream_and_info(search_query):
+    """透過 Piped API 取得音訊網址與標題"""
+    video_id = extract_video_id(search_query)
+    
+    # 若不是網址則進行搜尋
+    if not video_id:
+        data = fetch_from_piped(f"/search?q={requests.utils.quote(search_query)}&filter=videos")
+        if data and data.get("items"):
+            first_item = data["items"][0]
+            video_id = extract_video_id(first_item.get("url", ""))
+            
+    if not video_id:
+        raise Exception("找不到相關歌曲資訊！")
+
+    # 取得影片詳細串流
+    stream_data = fetch_from_piped(f"/streams/{video_id}")
+    if not stream_data:
+        raise Exception("無法從第三方 API 取得串流網址！")
+
+    title = stream_data.get("title", "未知歌曲")
+    audio_streams = stream_data.get("audioStreams", [])
+    
+    if not audio_streams:
+        raise Exception("無法取得音訊串流！")
+        
+    # 優先尋找 m4a/opus 直鏈
+    audio_url = audio_streams[0]["url"]
+    return title, audio_url
+
+# --- FFmpeg 設定 ---
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
 }
-
-ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
 # --- 閒置與退場邏輯 ---
 def cancel_timeout_task(guild_id):
@@ -83,7 +110,6 @@ async def inactivity_disconnect(guild_id, text_channel):
         if guild and guild.voice_client:
             voice_client = guild.voice_client
             
-            # 檢查是否沒有在播歌，或者語音頻道只剩機器人自己
             human_members = [m for m in voice_client.channel.members if not m.bot]
             is_idle = not voice_client.is_playing() and not voice_client.is_paused()
             
@@ -149,13 +175,12 @@ def play_next(guild_id, text_channel):
         coro = play_song_async(guild_id, text_channel, next_song)
         asyncio.run_coroutine_threadsafe(coro, bot.loop)
     else:
-        # 當佇列清空且歌曲確實播完後，才開始倒數計時離線
         cancel_timeout_task(guild_id)
         task = bot.loop.create_task(inactivity_disconnect(guild_id, text_channel))
         timeout_tasks[guild_id] = task
 
 async def play_song_async(guild_id, text_channel, song_info):
-    """實際解析網址並由 FFmpeg 播放音訊的核心處理邏輯"""
+    """實際由 API 取得音訊直鏈並由 FFmpeg 播放的核心邏輯"""
     guild = bot.get_guild(guild_id)
     if not guild or not guild.voice_client:
         return
@@ -163,15 +188,13 @@ async def play_song_async(guild_id, text_channel, song_info):
     voice_client = guild.voice_client
 
     try:
-        # 開始播放新歌，取消任何離線倒數
         cancel_timeout_task(guild_id)
 
+        # 非同步方式呼叫 Piped API 抓取 Audio Stream URL
         loop = asyncio.get_event_loop()
-        
-        # 針對單曲抓取真實播放串流網址
-        single_ytdl = yt_dlp.YoutubeDL({'format': 'bestaudio/best', 'quiet': True})
-        data = await loop.run_in_executor(None, lambda: single_ytdl.extract_info(song_info['url'], download=False))
-        stream_url = data['url'] if 'url' in data else song_info['url']
+        title, stream_url = await loop.run_in_executor(
+            None, lambda: get_audio_stream_and_info(song_info['query'])
+        )
 
         player = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTIONS)
         voice_client.play(
@@ -182,13 +205,13 @@ async def play_song_async(guild_id, text_channel, song_info):
         view = MusicPlayerView(voice_client, guild_id, text_channel)
         embed = discord.Embed(
             title="🎶 正在播放", 
-            description=f"**{song_info['title']}**", 
+            description=f"**{title}**", 
             color=discord.Color.green()
         )
         await text_channel.send(embed=embed, view=view)
 
     except Exception as e:
-        await text_channel.send(f"❌ 播放 `{song_info['title']}` 時發生錯誤：`{e}`")
+        await text_channel.send(f"❌ 播放 `{song_info.get('title', '歌曲')}` 時發生錯誤：`{e}`")
         play_next(guild_id, text_channel)
 
 # --- 事件處理 ---
@@ -210,16 +233,13 @@ async def on_voice_state_update(member, before, after):
     if not voice_client or not voice_client.is_connected():
         return
 
-    # 計算當前頻道內的真人數量
     human_members = [m for m in voice_client.channel.members if not m.bot]
 
     if len(human_members) == 0:
-        # 如果頻道裡沒人了，開始離線倒數
         cancel_timeout_task(guild.id)
         task = bot.loop.create_task(inactivity_disconnect(guild.id, None))
         timeout_tasks[guild.id] = task
     elif len(human_members) > 0 and (voice_client.is_playing() or voice_client.is_paused()):
-        # 如果有人進來了且正在放歌，取消離線倒數
         cancel_timeout_task(guild.id)
 
 # --- 斜線指令集 ---
@@ -235,8 +255,8 @@ async def join(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ 請先加入一個語音頻道！", ephemeral=True)
 
-@bot.tree.command(name="play", description="播放單曲或 YouTube 播放清單/合輯")
-@app_commands.describe(search="輸入單曲網址、播放清單網址或關鍵字")
+@bot.tree.command(name="play", description="播放單曲或關鍵字搜尋歌曲")
+@app_commands.describe(search="輸入單曲網址或關鍵字")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
 
@@ -257,60 +277,24 @@ async def play(interaction: discord.Interaction, search: str):
         queues[guild_id] = []
 
     try:
+        # 使用 API 預先查詢歌名（非同步）
         loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search, download=False))
+        title, _ = await loop.run_in_executor(
+            None, lambda: get_audio_stream_and_info(search)
+        )
 
-        if not data:
-            await interaction.followup.send("❌ 無法抓取音訊資訊，請確認網址或關鍵字是否正確！")
-            return
-
-        added_songs = []
-
-        # 判斷是否為合輯 / 播放清單
-        if 'entries' in data and data['entries']:
-            for entry in data['entries']:
-                if entry:
-                    video_id = entry.get('id') or entry.get('url')
-                    if video_id and not str(video_id).startswith('http'):
-                        url = f"https://www.youtube.com/watch?v={video_id}"
-                    else:
-                        url = entry.get('url') or entry.get('webpage_url')
-                    
-                    title = entry.get('title', '未知歌曲')
-                    if url:
-                        added_songs.append({'title': title, 'url': url})
-        else:
-            url = data.get('webpage_url') or data.get('url') or search
-            title = data.get('title', '未知歌曲')
-            added_songs.append({'title': title, 'url': url})
-
-        if not added_songs:
-            await interaction.followup.send("❌ 找不到可播放的歌曲或合輯！")
-            return
-
-        queues[guild_id].extend(added_songs)
+        song_item = {'title': title, 'query': search}
 
         if not voice_client.is_playing() and not voice_client.is_paused():
-            first_song = queues[guild_id].pop(0)
-            await play_song_async(guild_id, interaction.channel, first_song)
-
-            if len(added_songs) > 1:
-                await interaction.followup.send(f"📚 已成功將合輯加入佇列，共 **{len(added_songs)}** 首歌！第一首：**{first_song['title']}**")
-            else:
-                await interaction.followup.send(f"🎶 開始播放 **{first_song['title']}**！")
+            await play_song_async(guild_id, interaction.channel, song_item)
+            await interaction.followup.send(f"🎶 開始播放 **{title}**！")
         else:
-            if len(added_songs) > 1:
-                embed = discord.Embed(
-                    title="📝 已將合輯加入播放佇列", 
-                    description=f"成功加入 **{len(added_songs)}** 首歌至佇列中！", 
-                    color=discord.Color.blue()
-                )
-            else:
-                embed = discord.Embed(
-                    title="📝 已加入播放佇列", 
-                    description=f"**{added_songs[0]['title']}** (排隊順位：#{len(queues[guild_id])})", 
-                    color=discord.Color.blue()
-                )
+            queues[guild_id].append(song_item)
+            embed = discord.Embed(
+                title="📝 已加入播放佇列", 
+                description=f"**{title}** (排隊順位：#{len(queues[guild_id])})", 
+                color=discord.Color.blue()
+            )
             await interaction.followup.send(embed=embed)
 
     except Exception as e:
@@ -372,7 +356,5 @@ async def leave(interaction: discord.Interaction):
 
 # --- 主程式啟動點 ---
 if __name__ == "__main__":
-    # 1. 啟動 Web 伺服器 (供 Render 進行健康檢查)
     keep_alive()
-    # 2. 啟動 Discord 機器人
     bot.run(BOT_TOKEN)
