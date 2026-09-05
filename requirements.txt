@@ -1,5 +1,4 @@
-discord.py
-davey
-pynacl
-Flask
-requests
+discord.py>=2.3.0
+Flask>=2.3.0
+requests>=2.31.0
+PyNaCl>=1.5.0
