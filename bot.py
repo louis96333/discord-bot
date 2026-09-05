@@ -67,12 +67,12 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 強制跳過官方 YouTube API，轉由開放 API 實例處理音訊串流
-    'force_generic_extractor': False,
+    # 強制透過 Piped 代理伺服器解析，徹底隱藏 Render IP
+    'proxy': 'https://pipedproxy.kavin.rocks',
     'extractor_args': {
         'youtube': {
-            'player_skip': ['js'],
-            'invidious_instance': 'https://invidious.nerdvpn.de'
+            'player_client': ['mweb', 'web_embedded'],
+            'skip': ['dash', 'hls']
         }
     }
 }
