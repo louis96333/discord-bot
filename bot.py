@@ -63,12 +63,18 @@ YTDL_OPTIONS = {
     'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
-    'quiet': False,  # 設為 False 方便在 Render Logs 看驗證碼
+    'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    'username': 'oauth2',
-    'password': '',
+    # 徹底移除所有 cookiefile 與 oauth 欄位
+    # 改用網頁嵌入模式 (web_embedded)，YouTube 對嵌入式播放器的 IP 封鎖政策最寬鬆
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['web_embedded', 'player_client_web_embedded'],
+            'skip': ['dash', 'hls']
+        }
+    }
 }
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
