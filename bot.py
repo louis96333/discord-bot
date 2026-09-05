@@ -35,60 +35,85 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 queues = {}
 timeout_tasks = {}
 
-# --- Piped API 解析工具 (代替 yt-dlp 繞過 Bot 驗證) ---
+# --- 多重第三方 API 解析工具 ---
 PIPED_INSTANCES = [
     "https://pipedapi.kavin.rocks",
     "https://api.piped.private.coffee",
-    "https://pipedapi.mha.fi"
+    "https://pipedapi.mha.fi",
+    "https://pipedapi.drgns.space",
+    "https://piped-api.garudalinux.org"
 ]
 
+INVIDIOUS_INSTANCES = [
+    "https://inv.riverside.rocks",
+    "https://invidious.nerdvpn.de",
+    "https://invidious.drgns.space"
+]
+
+def extract_video_id(url_or_query):
+    """從 URL 或搜尋文字中提取 YouTube Video ID"""
+    match = re.search(r"(?:v=|\/|vi=)([0-9A-Za-z_-]{11})", url_or_query)
+    if match:
+        return match.group(1)
+    return None
+
 def fetch_from_piped(endpoint):
-    """嘗試多個 Piped 實例以確保穩定度"""
+    """嘗試多個 Piped 實例"""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for base_url in PIPED_INSTANCES:
         try:
-            res = requests.get(f"{base_url}{endpoint}", timeout=5)
+            res = requests.get(f"{base_url}{endpoint}", headers=headers, timeout=4)
             if res.status_code == 200:
                 return res.json()
         except Exception:
             continue
     return None
 
-def extract_video_id(url_or_query):
-    """從 URL 或搜尋文字中提取 YouTube Video ID"""
-    match = re.search(r"(?:v=|\/([0-9A-Za-z_-]{11}))", url_or_query)
-    if match:
-        return match.group(1) or match.group(0).replace("v=", "")
-    return None
+def fetch_from_invidious(video_id):
+    """備用：從 Invidious API 取得音訊串流"""
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    for base_url in INVIDIOUS_INSTANCES:
+        try:
+            res = requests.get(f"{base_url}/api/v1/videos/{video_id}", headers=headers, timeout=4)
+            if res.status_code == 200:
+                data = res.json()
+                title = data.get("title", "未知歌曲")
+                adaptive_formats = data.get("adaptiveFormats", [])
+                audio_streams = [f for f in adaptive_formats if f.get("type", "").startswith("audio/")]
+                if audio_streams:
+                    return title, audio_streams[0]["url"]
+        except Exception:
+            continue
+    return None, None
 
 def get_audio_stream_and_info(search_query):
-    """透過 Piped API 取得音訊網址與標題"""
+    """雙機制取得音訊網址與標題 (Piped -> Invidious)"""
     video_id = extract_video_id(search_query)
     
-    # 若不是網址則進行搜尋
+    # 若不是網址則進行 Piped 搜尋
     if not video_id:
         data = fetch_from_piped(f"/search?q={requests.utils.quote(search_query)}&filter=videos")
         if data and data.get("items"):
             first_item = data["items"][0]
-            video_id = extract_video_id(first_item.get("url", ""))
+            url = first_item.get("url", "")
+            video_id = extract_video_id(url)
             
     if not video_id:
-        raise Exception("找不到相關歌曲資訊！")
+        raise Exception("找不到相關歌曲資訊或影片 ID！")
 
-    # 取得影片詳細串流
+    # 1. 優先嘗試 Piped API
     stream_data = fetch_from_piped(f"/streams/{video_id}")
-    if not stream_data:
-        raise Exception("無法從第三方 API 取得串流網址！")
+    if stream_data and stream_data.get("audioStreams"):
+        title = stream_data.get("title", "未知歌曲")
+        audio_url = stream_data["audioStreams"][0]["url"]
+        return title, audio_url
 
-    title = stream_data.get("title", "未知歌曲")
-    audio_streams = stream_data.get("audioStreams", [])
-    
-    if not audio_streams:
-        raise Exception("無法取得音訊串流！")
-        
-    # 優先尋找 m4a/opus 直鏈
-    audio_url = audio_streams[0]["url"]
-    return title, audio_url
+    # 2. 備用方案：嘗試 Invidious API
+    title, audio_url = fetch_from_invidious(video_id)
+    if audio_url:
+        return title, audio_url
 
+    raise Exception("所有第三方 API 節點皆暫時無法取得該影片串流，請稍後再試或更換歌曲！")
 # --- FFmpeg 設定 ---
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
