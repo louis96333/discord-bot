@@ -67,12 +67,11 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 徹底移除所有 cookiefile 與 oauth 欄位
-    # 改用網頁嵌入模式 (web_embedded)，YouTube 對嵌入式播放器的 IP 封鎖政策最寬鬆
+    # 絕不使用 oauth2 或 cookiefile
     'extractor_args': {
         'youtube': {
-            'player_client': ['web_embedded', 'player_client_web_embedded'],
-            'skip': ['dash', 'hls']
+            'player_client': ['web_embedded', 'mweb'],
+            'skip': ['webpage', 'configs']
         }
     }
 }
