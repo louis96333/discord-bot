@@ -68,11 +68,12 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 加上下面這段來偽裝成行動裝置客戶端：
-    'cookiefile': 'cookies.txt',  # <--- 補上這行
-    'extractor_args': {          # <--- 補上這段
+    'cookiefile': 'cookies.txt',
+    # 強制 yt-dlp 使用行動端 / TV 客戶端繞過機房驗證
+    'extractor_args': {
         'youtube': {
-            'player_client': ['mweb', 'tv_embedded', 'android']
+            'player_client': ['ios', 'android', 'mweb'],
+            'skip': ['webpage', 'configs']
         }
     }
 }
