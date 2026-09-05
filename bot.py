@@ -7,6 +7,21 @@ from discord.ext import commands
 from flask import Flask
 import yt_dlp
 
+# ==========================================
+# 1. 自動處理 YouTube Cookie (從環境變數寫入 cookies.txt)
+# ==========================================
+cookie_str = os.getenv("YOUTUBE_COOKIE_STRING")
+if cookie_str:
+    print("檢測到 YOUTUBE_COOKIE_STRING 環境變數，正在產生 cookies.txt...")
+    with open("cookies.txt", "w", encoding="utf-8") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        for item in cookie_str.split("; "):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                f.write(f".youtube.com\tTRUE\t/\tFALSE\t0\t{k}\t{v}\n")
+    print("cookies.txt 產生完成！")
+else:
+    print("警告：未設置 YOUTUBE_COOKIE_STRING 環境變數，音樂抓取可能會被 YouTube 阻擋。")
 # --- 防休眠網頁伺服器 (Render Web Service 必備) ---
 app = Flask('')
 
@@ -54,13 +69,13 @@ YTDL_OPTIONS = {
     'default_search': 'auto',
     'source_address': '0.0.0.0',
     # 加上下面這段來偽裝成行動裝置客戶端：
-    'extractor_args': {
+    'cookiefile': 'cookies.txt',  # <--- 補上這行
+    'extractor_args': {          # <--- 補上這段
         'youtube': {
-            'player_client': ['android', 'ios']
+            'player_client': ['mweb', 'tv_embedded', 'android']
         }
     }
 }
-
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
