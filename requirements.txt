@@ -3,3 +3,5 @@ yt-dlp
 davey
 pynacl
 Flask
+requests
+curl_cffi
