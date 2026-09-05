@@ -3,4 +3,4 @@ yt-dlp
 davey
 pynacl
 Flask
-yt-dlp-get-pot
+yt-dlp-youtube-oauth2
