@@ -52,11 +52,11 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 改用 http 協定開頭的代理入口
-    'proxy': 'http://pipedproxy.kavin.rocks',
+    # 徹底移除 'proxy' 欄位
+    # 改用 Web Embedded 模式搭配 Dash/HLS 跳過，讓 yt-dlp 抓取開放串流
     'extractor_args': {
         'youtube': {
-            'player_client': ['mweb', 'web_embedded'],
+            'player_client': ['web_embedded', 'mweb'],
             'skip': ['dash', 'hls']
         }
     }
