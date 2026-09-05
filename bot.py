@@ -63,17 +63,14 @@ YTDL_OPTIONS = {
     'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
-    'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    'cookiefile': 'cookies.txt',
-    # 強制 yt-dlp 使用行動端 / TV 客戶端繞過機房驗證
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios', 'android', 'mweb'],
-            'skip': ['webpage', 'configs']
+            'player_client': ['web', 'mweb', 'ios'],
+            'po_token': ['web+po_token_generator']
         }
     }
 }
