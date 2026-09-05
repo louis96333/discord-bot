@@ -3,4 +3,3 @@ yt-dlp
 davey
 pynacl
 Flask
-yt-dlp-youtube-oauth2
