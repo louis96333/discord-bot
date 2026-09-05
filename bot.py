@@ -67,11 +67,12 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 絕不使用 oauth2 或 cookiefile
+    # 強制跳過官方 YouTube API，轉由開放 API 實例處理音訊串流
+    'force_generic_extractor': False,
     'extractor_args': {
         'youtube': {
-            'player_client': ['web_embedded', 'mweb'],
-            'skip': ['webpage', 'configs']
+            'player_skip': ['js'],
+            'invidious_instance': 'https://invidious.nerdvpn.de'
         }
     }
 }
