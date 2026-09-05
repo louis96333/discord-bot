@@ -52,8 +52,8 @@ YTDL_OPTIONS = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 強制透過 Piped 代理伺服器解析，徹底隱藏 Render IP
-    'proxy': 'https://pipedproxy.kavin.rocks',
+    # 改用 http 協定開頭的代理入口
+    'proxy': 'http://pipedproxy.kavin.rocks',
     'extractor_args': {
         'youtube': {
             'player_client': ['mweb', 'web_embedded'],
