@@ -65,13 +65,17 @@ YTDL_OPTIONS = {
     'ignoreerrors': False,
     'quiet': True,
     'no_warnings': True,
-    'default_search': 'auto',
+    'default_search': 'ytsearch',  # 自動開啟 YouTube 搜尋
     'source_address': '0.0.0.0',
+    # 使用電視 TV 終端與 Android 模擬客戶端，這是目前免登入最強的繞過機制
     'extractor_args': {
         'youtube': {
-            'player_client': ['web', 'mweb', 'ios'],
-            'po_token': ['web+po_token_generator']
+            'player_client': ['tv', 'android_creator', 'android_vr'],
+            'skip': ['webpage', 'configs']
         }
+    },
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
 }
 FFMPEG_OPTIONS = {
