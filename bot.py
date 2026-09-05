@@ -35,8 +35,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 queues = {}
 timeout_tasks = {}
 
-# --- 多重第三方 API 解析工具 ---
-# --- Cobalt & YouTube 工具 ---
+# --- Cobalt & 多重 API 解析工具 ---
 COBALT_INSTANCES = [
     "https://api.cobalt.tools",
     "https://cobalt-api.koyeb.app"
@@ -92,7 +91,8 @@ def fetch_from_piped(endpoint):
         except Exception:
             continue
     return None
-    def fetch_youtube_title(video_id):
+
+def fetch_youtube_title(video_id):
     """利用 oEmbed 免費 API 快速取得影片標題"""
     try:
         res = requests.get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json", timeout=3)
@@ -135,6 +135,7 @@ def get_audio_stream_and_info(search_query):
         return title, stream_data["audioStreams"][0]["url"]
 
     raise Exception("目前 YouTube 串流擷取受限，請貼上完整網址或稍後再試！")
+
 # --- FFmpeg 設定 ---
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -236,7 +237,7 @@ async def play_song_async(guild_id, text_channel, song_info):
     try:
         cancel_timeout_task(guild_id)
 
-        # 非同步方式呼叫 Piped API 抓取 Audio Stream URL
+        # 非同步方式呼叫 API 抓取 Audio Stream URL
         loop = asyncio.get_event_loop()
         title, stream_url = await loop.run_in_executor(
             None, lambda: get_audio_stream_and_info(song_info['query'])
