@@ -63,20 +63,12 @@ YTDL_OPTIONS = {
     'noplaylist': True,
     'nocheckcertificate': True,
     'ignoreerrors': False,
-    'quiet': True,
+    'quiet': False,  # 設為 False 方便在 Render Logs 看驗證碼
     'no_warnings': True,
-    'default_search': 'ytsearch',  # 自動開啟 YouTube 搜尋
+    'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # 使用電視 TV 終端與 Android 模擬客戶端，這是目前免登入最強的繞過機制
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['tv', 'android_creator', 'android_vr'],
-            'skip': ['webpage', 'configs']
-        }
-    },
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    }
+    'username': 'oauth2',
+    'password': '',
 }
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
