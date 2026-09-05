@@ -7,6 +7,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from flask import Flask
+import yt_dlp
 
 # --- 防休眠網頁伺服器 (Render Web Service 必備) ---
 app = Flask('')
@@ -35,26 +36,37 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 queues = {}
 timeout_tasks = {}
 
-# --- Cobalt & 多重 API 解析工具 ---
+# --- Cobalt API & 穩定搜尋工具 ---
 COBALT_INSTANCES = [
     "https://api.cobalt.tools",
     "https://cobalt-api.koyeb.app"
 ]
 
-PIPED_INSTANCES = [
-    "https://pipedapi.kavin.rocks",
-    "https://api.piped.private.coffee",
-    "https://pipedapi.mha.fi",
-    "https://pipedapi.drgns.space",
-    "https://piped-api.garudalinux.org"
-]
-
 def extract_video_id(url_or_query):
-    """從 URL 或搜尋文字中提取 YouTube Video ID"""
+    """從 URL 中提取 YouTube Video ID"""
     match = re.search(r"(?:v=|\/|vi=)([0-9A-Za-z_-]{11})", url_or_query)
     if match:
         return match.group(1)
     return None
+
+def search_youtube_with_ytdlp(query):
+    """專門用 yt-dlp 進行關鍵字搜尋 (極速，只抓元資料不下載)"""
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'noplaylist': True,
+        'default_search': 'ytsearch',
+        'quiet': True,
+        'no_warnings': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+            if info and 'entries' in info and len(info['entries']) > 0:
+                first = info['entries'][0]
+                return first.get('id'), first.get('title', 'YouTube 歌曲')
+        except Exception as e:
+            print(f"yt-dlp 搜尋失敗: {e}")
+    return None, None
 
 def fetch_from_cobalt(youtube_url):
     """利用 Cobalt API 提取高音質音訊串流網址"""
@@ -80,18 +92,6 @@ def fetch_from_cobalt(youtube_url):
             continue
     return None
 
-def fetch_from_piped(endpoint):
-    """嘗試多個 Piped 實例"""
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    for base_url in PIPED_INSTANCES:
-        try:
-            res = requests.get(f"{base_url}{endpoint}", headers=headers, timeout=4)
-            if res.status_code == 200:
-                return res.json()
-        except Exception:
-            continue
-    return None
-
 def fetch_youtube_title(video_id):
     """利用 oEmbed 免費 API 快速取得影片標題"""
     try:
@@ -103,38 +103,28 @@ def fetch_youtube_title(video_id):
     return "YouTube 歌曲"
 
 def get_audio_stream_and_info(search_query):
-    """多重機制取得音訊網址與標題 (Cobalt -> Piped)"""
+    """組合搜尋與串流擷取"""
     video_id = extract_video_id(search_query)
+    title = None
 
-    # 若傳入的是關鍵字非 URL，先用 Piped 搜尋 Video ID
+    # 如果是關鍵字搜尋（非網址）
     if not video_id:
-        try:
-            data = fetch_from_piped(f"/search?q={requests.utils.quote(search_query)}&filter=videos")
-            if data and data.get("items"):
-                first_item = data["items"][0]
-                url = first_item.get("url", "")
-                video_id = extract_video_id(url)
-        except Exception:
-            pass
+        video_id, title = search_youtube_with_ytdlp(search_query)
 
     if not video_id:
-        raise Exception("找不到相關歌曲資訊或影片 ID！")
+        raise Exception("找不到相關歌曲資訊！")
+
+    if not title:
+        title = fetch_youtube_title(video_id)
 
     full_yt_url = f"https://www.youtube.com/watch?v={video_id}"
-    title = fetch_youtube_title(video_id)
 
-    # 1. 優先使用 Cobalt API 抓取串流
+    # 使用 Cobalt API 取得音訊直鏈
     audio_url = fetch_from_cobalt(full_yt_url)
     if audio_url:
         return title, audio_url
 
-    # 2. 備用方案：嘗試 Piped API
-    stream_data = fetch_from_piped(f"/streams/{video_id}")
-    if stream_data and stream_data.get("audioStreams"):
-        title = stream_data.get("title", title)
-        return title, stream_data["audioStreams"][0]["url"]
-
-    raise Exception("目前 YouTube 串流擷取受限，請貼上完整網址或稍後再試！")
+    raise Exception("目前 YouTube 串流解析受限，請稍後再試！")
 
 # --- FFmpeg 設定 ---
 FFMPEG_OPTIONS = {
@@ -237,7 +227,6 @@ async def play_song_async(guild_id, text_channel, song_info):
     try:
         cancel_timeout_task(guild_id)
 
-        # 非同步方式呼叫 API 抓取 Audio Stream URL
         loop = asyncio.get_event_loop()
         title, stream_url = await loop.run_in_executor(
             None, lambda: get_audio_stream_and_info(song_info['query'])
@@ -324,7 +313,6 @@ async def play(interaction: discord.Interaction, search: str):
         queues[guild_id] = []
 
     try:
-        # 使用 API 預先查詢歌名（非同步）
         loop = asyncio.get_event_loop()
         title, _ = await loop.run_in_executor(
             None, lambda: get_audio_stream_and_info(search)
